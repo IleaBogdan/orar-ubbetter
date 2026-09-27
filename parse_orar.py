@@ -33,6 +33,18 @@ DAYS = {
     "duminica": "Duminică",
 }
 
+TYPE_FILL = {
+    "C": "DDEBF7",   # course -> light blue
+    "S": "E2EFDA",   # seminar -> light green
+    "L": "FFF2CC",   # lab -> light orange
+}
+
+TYPE_LABEL = {
+    "C": "Curs",
+    "S": "Seminar",
+    "L": "Laborator",
+}
+
 
 def clean(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
@@ -236,9 +248,21 @@ def write_sheet(ws, parsed):
             for j, hour in enumerate(hours):
                 act = schedule.get(g, {}).get(day, {}).get(hour)
                 if act:
-                    ws.cell(row=row, column=2 + i * nhours + j, value=fmt_subject(act))
-                    ws.cell(row=row + 1, column=2 + i * nhours + j, value=act["room"])
-        row += 2
+                    data=fmt_subject(act).split("]")
+                    data[0]+=']'
+                    data[1]=data[1][2:-1]
+                    # print(data)
+                    subject_cell = ws.cell(row=row, column=2 + i * nhours + j, value=data[0])
+                    t = act.get("type")
+                    if t in TYPE_FILL:
+                        subject_cell.fill = PatternFill("solid", fgColor=TYPE_FILL[t])
+                    ws.cell(row=row+1,column=2 + i * nhours + j, value=data[1])
+                    ws.cell(row=row + 2, column=2 + i * nhours + j, value=act["room"])
+                else:
+                    ws.cell(row=row, column=2 + i * nhours + j, value="----")
+                    ws.cell(row=row+1,column=2 + i * nhours + j, value="----")
+                    ws.cell(row=row + 2, column=2 + i * nhours + j, value="----")
+        row += 3
 
     # light formatting
     bold = Font(bold=True)
@@ -247,6 +271,24 @@ def write_sheet(ws, parsed):
         ws.cell(row=3, column=col).font = bold
         ws.cell(row=3, column=col).fill = fill
         ws.cell(row=4, column=col).font = bold
+
+    # auto-size columns to fit the text
+    widths = {}
+    for row in ws.iter_rows():
+        for cell in row:
+            if cell.value is not None:
+                w = len(str(cell.value))
+                if w > widths.get(cell.column_letter, 0):
+                    widths[cell.column_letter] = w
+    for letter, w in widths.items():
+        ws.column_dimensions[letter].width = w + 2
+
+    # legend for the type colors
+    legend_row = 5 + len(groups) * 3 + 2
+    ws.cell(row=legend_row, column=1, value="Legendă:").font = Font(bold=True)
+    for k, t in enumerate(TYPE_FILL):
+        c = ws.cell(row=legend_row + 1 + k, column=1, value=TYPE_LABEL.get(t, t))
+        c.fill = PatternFill("solid", fgColor=TYPE_FILL[t])
 
 
 def main(argv):
