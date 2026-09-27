@@ -56,6 +56,30 @@ def fetch(url: str) -> str:
     return r.text
 
 
+def derive_legend_url(schedule_url: str) -> str:
+    """From .../2026-1/grafic/IA1.html -> .../2026-1/sali/legenda.html"""
+    parts = schedule_url.split("/")
+    return "/".join(parts[:-2] + ["sali", "legenda.html"])
+
+
+def fetch_locations(url: str) -> dict:
+    """Parse legenda.html into a {room_code: address} map."""
+    html = fetch(url)
+    soup = BeautifulSoup(html, "lxml")
+    table = soup.find("table")
+    locations = {}
+    if table is None:
+        return locations
+    for tr in table.find_all("tr"):
+        tds = tr.find_all(["td", "th"])
+        if len(tds) >= 2:
+            code = clean(tds[0].get_text(" ", strip=True))
+            addr = clean(tds[1].get_text(" ", strip=True))
+            if code and code.lower() not in ("sala", "localizarea"):
+                locations[code] = addr
+    return locations
+
+
 def expand_table(trs):
     """Expand a table into a row/col grid, honouring rowspan/colspan."""
     grid = []
@@ -224,12 +248,14 @@ def fmt_subject(act) -> str:
     return " ".join(parts)
 
 
-def write_sheet(ws, parsed):
+def write_sheet(ws, parsed, locations=None):
     days = parsed["days"]
     hours = parsed["hours"]
     groups = parsed["groups"]
     schedule = parsed["schedule"]
     nhours = len(hours)
+    locations = locations or {}
+    loc_lower = {k.lower(): v for k, v in locations.items()}
 
     ws.cell(row=1, column=1, value=parsed["title"])
 
@@ -258,11 +284,14 @@ def write_sheet(ws, parsed):
                         subject_cell.fill = PatternFill("solid", fgColor=TYPE_FILL[t])
                     ws.cell(row=row+1,column=2 + i * nhours + j, value=data[1])
                     ws.cell(row=row + 2, column=2 + i * nhours + j, value=act["room"])
+                    ws.cell(row=row + 3, column=2 + i * nhours + j,
+                            value=loc_lower.get((act["room"] or "").lower(), ""))
                 else:
                     ws.cell(row=row, column=2 + i * nhours + j, value="----")
                     ws.cell(row=row+1,column=2 + i * nhours + j, value="----")
                     ws.cell(row=row + 2, column=2 + i * nhours + j, value="----")
-        row += 3
+                    ws.cell(row=row + 3, column=2 + i * nhours + j, value="----")
+        row += 4
 
     # light formatting
     bold = Font(bold=True)
@@ -284,7 +313,7 @@ def write_sheet(ws, parsed):
         ws.column_dimensions[letter].width = w + 2
 
     # legend for the type colors
-    legend_row = 5 + len(groups) * 3 + 2
+    legend_row = 5 + len(groups) * 4 + 2
     ws.cell(row=legend_row, column=1, value="Legendă:").font = Font(bold=True)
     for k, t in enumerate(TYPE_FILL):
         c = ws.cell(row=legend_row + 1 + k, column=1, value=TYPE_LABEL.get(t, t))
@@ -310,12 +339,22 @@ def main(argv):
 
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
+
+    locations = {}
+    legend_url = derive_legend_url(urls[0])
+    try:
+        print(f"Fetching locations {legend_url} ...")
+        locations = fetch_locations(legend_url)
+        print(f"  -> {len(locations)} locations loaded")
+    except Exception as e:
+        print(f"  -> could not load locations: {e}")
+
     for url in urls:
         stem = urllib.parse.urlparse(url).path.rsplit("/", 1)[-1].rsplit(".", 1)[0] or "orar"
         print(f"Fetching {url} ...")
         parsed = parse_page(fetch(url))
         ws = wb.create_sheet(title=stem[:31])
-        write_sheet(ws, parsed)
+        write_sheet(ws, parsed, locations)
         print(f"  -> {stem}: {len(parsed['groups'])} groups, "
               f"{len(parsed['days'])} days, {len(parsed['hours'])} hour slots")
 
